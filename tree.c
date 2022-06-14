@@ -1,22 +1,8 @@
+#include "mpi.h"
 #include <stdio.h>
 #include <stdlib.h>
-#include <time.h>
-#include "mpi.h"
 
-#DEFINE N = 1000000
-#DEFINE MIN = 1
-#DEFINE MAX = 100
-
-int[N] randVector()
-{
-    srand(time(NULL));
-    int vector[N] = [];
-    for (i = 0; i < N; i++)
-    {
-        vector[i] = random_number(MIN, MAX)
-    }
-    return vector;
-}
+#define SIZE 1000000
 
 void swap(int *xp, int *yp)
 {
@@ -25,7 +11,7 @@ void swap(int *xp, int *yp)
     *yp = temp;
 }
 
-void BubbleSort(int arr[], int n)
+void bubbleSort(int arr[], int n)
 {
     int i, j;
     for (i = 0; i < n - 1; i++)
@@ -34,46 +20,82 @@ void BubbleSort(int arr[], int n)
                 swap(&arr[j], &arr[j + 1]);
 }
 
+int merge(int a[], int b[], int n)
+{
+    int c[n * 2];
+    int i, j, k;
+    for (i = 0; i < n; i++)
+    {
+        if (a[j] <= b[k])
+        {
+            c[i] = a[j];
+            j++;
+        }
+        else
+        {
+            c[i] = b[k];
+            k++;
+        }
+    }
+}
+
 int main(int argc, char **argv)
 {
-    MPI_Init();
-    my_rank = MPI_Comm_rank(); // pega o numero do processo atual (rank)
-    int delta = 2;
+    int my_rank;  // Identificador do processo
+    int tag = 50; // Tag para as mensagens
 
+    int vetor[SIZE]; // Buffer para as mensagens
+    MPI_Init(&argc, &argv);
+    MPI_Comm_rank(MPI_COMM_WORLD, &my_rank); // pega o numero do processo atual (rank)
+
+    int actual_size;
+    int delta = 500000;
+
+    // recebo vetor
     if (my_rank != 0)
-    {                                                // recebo vetor
-        MPI_Recv(vetor, pai);                        // não sou a raiz, tenho pai
-        MPI_Get_count(&Status, MPI_INT, &tam_vetor); // descubro tamanho da mensagem recebida
+    {
+        MPI_Recv(vetor, actual_size, MPI_INT, (my_rank - 1) / 2, tag, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+        MPI_Get_count(MPI_STATUS_IGNORE, MPI_INT, &actual_size);
     }
     else
     {
-        tam_vetor = N;                // defino tamanho inicial do vetor
-        int vector[N] = randVector(); // sou a raiz e portanto gero o vetor - ordem reversa
+        int i;
+        actual_size = SIZE;
+        for (i = 0; i < SIZE; i++)
+            vetor[i] = SIZE - i;
     }
 
     // dividir ou conquistar?
-    if (tam_vetor <= delta)
+    if (actual_size <= delta)
     {
-        int size = sizeof(vetor) / sizeof(vetor[0]);
-        BubbleSort(vetor, size); // conquisto
+        bubbleSort(vetor, actual_size);
     }
-
     else
     {
-        // quebrar em duas partes e mandar para os filhos
-        MPI_Send(&vetor[0], &vetor[0], tam_vetor / 2);             // mando metade inicial do vetor
-        MPI_Send(&vetor[tam_vetor / 2], &vetor[0], tam_vetor / 2); // mando metade final
+        // dividir - quebrar em duas partes e mandar para os filhos
+        // printf("RANK: %d \n", my_rank);
+        MPI_Send(&vetor[0], actual_size / 2, MPI_INT, (my_rank * 2) + 1, tag, MPI_COMM_WORLD);
+        MPI_Send(&vetor[actual_size / 2], actual_size / 2, MPI_INT, (my_rank * 2) + 2, tag, MPI_COMM_WORLD);
 
         // receber dos filhos
-        MPI_Recv(&vetor[0], &vetor[0]);
-        MPI_Recv(&vetor[tam_vetor / 2], &vetor[tam_vetor / 2]);
+        MPI_Recv(&vetor[0], actual_size / 2, MPI_INT, (my_rank * 2) + 1, tag, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+        MPI_Recv(&vetor[actual_size / 2], actual_size / 2, MPI_INT, (my_rank * 2) + 2, tag, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
 
         // intercalo vetor inteiro
-        Intercala(vetor);
+        merge(&vetor[0], &vetor[actual_size / 2], actual_size);
     }
 
-    MPI_Send(vetor, pai, tam_vetor); // tenho pai, retorno vetor ordenado pra ele
-    else Mostra(vetor);              // sou o raiz, mostro vetor
+    if (my_rank != 0)
+    {
+        // printf("RANK: %d \n", my_rank);
+        MPI_Send(vetor, actual_size, MPI_INT, (my_rank - 1) / 2, tag, MPI_COMM_WORLD);
+    }
+    else
+    {
+        for (int i = 0; i < SIZE; i++)
+            printf("%2d  ", vetor[i]);
+        printf("\n");
+    }
 
     MPI_Finalize();
 }
