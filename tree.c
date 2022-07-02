@@ -1,8 +1,10 @@
+
 #include "mpi.h"
 #include <stdio.h>
 #include <stdlib.h>
 
-#define SIZE 1000000
+#define ARRAY_SIZE 1000000
+#define DELTA 31250 // 32 nodos folha
 
 void swap(int *xp, int *yp)
 {
@@ -11,91 +13,91 @@ void swap(int *xp, int *yp)
     *yp = temp;
 }
 
-void bubbleSort(int arr[], int n)
+void bubbleSort(int tam, int *arr)
 {
     int i, j;
-    for (i = 0; i < n - 1; i++)
-        for (j = 0; j < n - i - 1; j++)
+    for (i = 0; i < tam - 1; i++)
+        for (j = 0; j < tam - i - 1; j++)
             if (arr[j] > arr[j + 1])
                 swap(&arr[j], &arr[j + 1]);
 }
 
-int merge(int a[], int b[], int n)
+int *merge(int tam, int vetor[])
 {
-    int c[n * 2];
-    int i, j, k;
-    for (i = 0; i < n; i++)
+    int *vetor_auxiliar;
+    int i1, i2, i_aux;
+
+    vetor_auxiliar = (int *)malloc(sizeof(int) * tam);
+
+    i1 = 0;
+    i2 = tam / 2;
+
+    for (i_aux = 0; i_aux < tam; i_aux++)
     {
-        if (a[j] <= b[k])
-        {
-            c[i] = a[j];
-            j++;
-        }
+        if (((vetor[i1] <= vetor[i2]) && (i1 < (tam / 2))) || (i2 == tam))
+            vetor_auxiliar[i_aux] = vetor[i1++];
         else
-        {
-            c[i] = b[k];
-            k++;
-        }
+            vetor_auxiliar[i_aux] = vetor[i2++];
     }
+
+    return vetor_auxiliar;
 }
 
 int main(int argc, char **argv)
 {
-    int my_rank;  // Identificador do processo
-    int tag = 50; // Tag para as mensagens
+    MPI_Status status, upperStatus;
 
-    int vetor[SIZE]; // Buffer para as mensagens
     MPI_Init(&argc, &argv);
-    MPI_Comm_rank(MPI_COMM_WORLD, &my_rank); // pega o numero do processo atual (rank)
 
-    int actual_size;
-    int delta = 500000;
+    int my_rank, proc_n;
 
-    // recebo vetor
-    if (my_rank != 0)
-    {
-        MPI_Recv(vetor, actual_size, MPI_INT, (my_rank - 1) / 2, tag, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-        MPI_Get_count(MPI_STATUS_IGNORE, MPI_INT, &actual_size);
-    }
-    else
-    {
-        int i;
-        actual_size = SIZE;
-        for (i = 0; i < SIZE; i++)
-            vetor[i] = SIZE - i;
-    }
+    MPI_Comm_rank(MPI_COMM_WORLD, &my_rank);
+    MPI_Comm_size(MPI_COMM_WORLD, &proc_n);
 
-    // dividir ou conquistar?
-    if (actual_size <= delta)
-    {
-        bubbleSort(vetor, actual_size);
-    }
-    else
-    {
-        // dividir - quebrar em duas partes e mandar para os filhos
-        // printf("RANK: %d \n", my_rank);
-        MPI_Send(&vetor[0], actual_size / 2, MPI_INT, (my_rank * 2) + 1, tag, MPI_COMM_WORLD);
-        MPI_Send(&vetor[actual_size / 2], actual_size / 2, MPI_INT, (my_rank * 2) + 2, tag, MPI_COMM_WORLD);
+    double initial_time = MPI_Wtime();
 
-        // receber dos filhos
-        MPI_Recv(&vetor[0], actual_size / 2, MPI_INT, (my_rank * 2) + 1, tag, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-        MPI_Recv(&vetor[actual_size / 2], actual_size / 2, MPI_INT, (my_rank * 2) + 2, tag, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+    int vetor[ARRAY_SIZE];
+    int *new_vector;
+    int i, current_size;
 
-        // intercalo vetor inteiro
-        merge(&vetor[0], &vetor[actual_size / 2], actual_size);
-    }
+    int left_node = 2 * my_rank + 1;
+    int right_node = 2 * my_rank + 2;
 
     if (my_rank != 0)
     {
-        // printf("RANK: %d \n", my_rank);
-        MPI_Send(vetor, actual_size, MPI_INT, (my_rank - 1) / 2, tag, MPI_COMM_WORLD);
+        MPI_Recv(vetor, ARRAY_SIZE, MPI_INT, MPI_ANY_SOURCE, MPI_ANY_TAG, MPI_COMM_WORLD, &upperStatus);
+        MPI_Get_count(&upperStatus, MPI_INT, &current_size);
     }
     else
     {
-        for (int i = 0; i < SIZE; i++)
-            printf("%2d  ", vetor[i]);
-        printf("\n");
+        for (i = 0; i < ARRAY_SIZE; i++)
+            vetor[i] = ARRAY_SIZE - i;
+        current_size = ARRAY_SIZE;
+    }
+    if (current_size > DELTA)
+    {
+        MPI_Send(&vetor[0], current_size / 2, MPI_INT, left_node, 1, MPI_COMM_WORLD);
+        MPI_Send(&vetor[current_size / 2], current_size / 2, MPI_INT, right_node, 1, MPI_COMM_WORLD);
+
+        MPI_Recv(&vetor[0], current_size / 2, MPI_INT, left_node, 1, MPI_COMM_WORLD, &status);
+        MPI_Recv(&vetor[current_size / 2], current_size / 2, MPI_INT, right_node, 1, MPI_COMM_WORLD, &status);
+
+        new_vector = merge(current_size, vetor);
+    }
+    else
+    {
+        bubbleSort(current_size, vetor);
+        new_vector = vetor;
     }
 
+    if (my_rank != 0)
+    {
+        MPI_Send(new_vector, current_size, MPI_INT, upperStatus.MPI_SOURCE, 1, MPI_COMM_WORLD);
+    }
+    else
+    {
+        printf("\nTempo de execucao: %.4f s\n", MPI_Wtime() - initial_time);
+    }
     MPI_Finalize();
+    return 0;
 }
